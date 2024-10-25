@@ -3,7 +3,6 @@ import asyncio
 import websockets
 import socket
 import json
-import threading
 from queue import Queue
 
 # Configuration
@@ -57,7 +56,12 @@ async def command_consumer():
 
         # Process commands if calibrated
         while calibrated and not shutdown_event.is_set():
-            command = command_queue.get()
+            try:
+                command = command_queue.get_nowait()
+            except Queue.Empty:
+                await asyncio.sleep(0.1)
+                continue
+
             print("Sending command to hardware: {}".format(command))
             response = send_command_to_hardware(command)
             if response != "ok":

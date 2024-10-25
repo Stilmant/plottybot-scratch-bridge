@@ -43,7 +43,7 @@ async def command_consumer(command_queue):
             print("Checking if plottybot is calibrated")
             # Get hardware status
             status = json.loads(send_command_to_hardware("get_status"))
-            # out put log for debugging: output only calibration_done, canvas_max_x, canvas_max_y
+            # output log for debugging: output only calibration_done, canvas_max_x, canvas_max_y
             print("Hardware status: ", status["calibration_done"], status["canvas_max_x"], status["canvas_max_y"])
             # If not calibrated, keep checking
             if not status["calibration_done"]:
@@ -104,30 +104,34 @@ async def start_websocket_server():
         await shutdown_event.wait()  # Run until shutdown_event is set
         print("Shutting down WebSocket server...")
 
-def run_websocket_server():
-    asyncio.run(start_websocket_server())
+def run_websocket_server(loop):
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_websocket_server())
 
 async def run_command_consumer():
     await command_consumer(command_queue)
 
-# Main function to start servers
 def main():
+    # Create the shared event loop
+    loop = asyncio.new_event_loop()
+
     # Create threads for websocket_server and command_consumer
-    websocket_thread = threading.Thread(target=run_websocket_server, daemon=True)
-    command_consumer_thread = threading.Thread(target=lambda: asyncio.run(run_command_consumer()), daemon=True)
+    websocket_thread = threading.Thread(target=run_websocket_server, args=(loop,), daemon=True)
+    command_consumer_thread = threading.Thread(target=lambda: loop.run_until_complete(run_command_consumer()), daemon=True)
 
     # Start threads
     websocket_thread.start()
     command_consumer_thread.start()
 
-     # Main thread waits for "quit" command
+    # Main thread waits for "quit" command
     while True:
         user_input = input("Type 'quit' to stop the servers: ")
         if user_input == "quit":
             print("Shutting down...")
-            shutdown_event.set()  # Signal all threads to shut down
+            loop.call_soon_threadsafe(shutdown_event.set)  # Signal all threads to shut down
             websocket_thread.join()
             command_consumer_thread.join()
+            loop.stop()
             break
 
 def shutdown_handler(signum, frame):

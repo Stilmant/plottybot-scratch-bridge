@@ -133,7 +133,7 @@ async def main():
 
 def shutdown_handler(signum, frame):
     print("Shutdown signal received. Cleaning up...")
-    shutdown_event.set()  # Signal the event to shut down
+    asyncio.get_event_loop().call_soon_threadsafe(shutdown_event.set)  # Signal the event to shut down
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, shutdown_handler)  # For Ctrl+C

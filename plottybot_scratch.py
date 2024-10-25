@@ -3,7 +3,8 @@ import asyncio
 import websockets
 import socket
 import json
-from queue import Queue, Empty
+import threading
+from queue import Queue
 
 # Configuration
 command_server_address = "127.0.0.1"
@@ -14,7 +15,7 @@ canvas_max_x = 0
 canvas_max_y = 0
 
 # Global shutdown flag
-shutdown_event = asyncio.Event()
+shutdown_event = threading.Event()
 
 def convert_coordinates(x, y):
     converted_x = (x + 250) * canvas_max_x / 500
@@ -33,16 +34,16 @@ def send_command_to_hardware(command):
         return "error"
 
 # Process commands in the queue
-async def command_consumer():
+async def command_consumer(command_queue):
     global canvas_max_x, canvas_max_y
     calibrated = False
-    while not shutdown_event.is_set():
+    while True:
         # Check if calibrated
         if not calibrated:
             print("Checking if plottybot is calibrated")
             # Get hardware status
             status = json.loads(send_command_to_hardware("get_status"))
-            # output log for debugging: output only calibration_done, canvas_max_x, canvas_max_y
+            # out put log for debuggin: output only calibration_done, canvas_max_x, canvas_max_y
             print("Hardware status: ", status["calibration_done"], status["canvas_max_x"], status["canvas_max_y"])
             # If not calibrated, keep checking
             if not status["calibration_done"]:
@@ -55,13 +56,8 @@ async def command_consumer():
                 calibrated = True
 
         # Process commands if calibrated
-        while calibrated and not shutdown_event.is_set():
-            try:
-                command = command_queue.get_nowait()
-            except Empty:
-                await asyncio.sleep(0.1)
-                continue
-
+        while calibrated:
+            command = command_queue.get()
             print("Sending command to hardware: {}".format(command))
             response = send_command_to_hardware(command)
             if response != "ok":
@@ -69,7 +65,6 @@ async def command_consumer():
                 calibrated = False
                 break
 
-    print("Command consumer shutdown.")
 
 # Websocket Server Logic
 async def websocket_server(websocket, path):
@@ -81,7 +76,7 @@ async def websocket_server(websocket, path):
             data = json.loads(message)
             print(f"Received message: {data}")
             if data["type"] == "goToXY":
-                if data["oldX"] != oldX or data["oldY"] == oldY:
+                if data["oldX"] != oldX or data["oldY"] != oldY:
                     # If oldX or oldY has changed, send a penUp command and move to the new 'old' location
                     command_queue.put("pen_up")
                     x, y = convert_coordinates(data["oldX"], data["oldY"])
@@ -105,39 +100,46 @@ async def websocket_server(websocket, path):
 async def start_websocket_server():
     async with websockets.serve(websocket_server, '0.0.0.0', websocket_port):
         print("WebSocket server started on port 8766")
-        await shutdown_event.wait()  # Run until shutdown_event is set
-        print("Shutting down WebSocket server...")
+        await asyncio.Future()  # run forever
 
-async def main():
-    # Start the websocket server and the command consumer
-    websocket_server_task = asyncio.create_task(start_websocket_server())
-    command_consumer_task = asyncio.create_task(command_consumer())
+def run_websocket_server():
+    asyncio.run(start_websocket_server())
 
-    # Wait for the shutdown signal
-    await shutdown_event.wait()
+def run_command_consumer():
+    asyncio.run(command_consumer(command_queue))
 
-    # Cancel the tasks
-    websocket_server_task.cancel()
-    command_consumer_task.cancel()
+def command_consumer_thread_function():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(command_consumer())
 
-    # Wait for the tasks to finish
-    try:
-        await websocket_server_task
-    except asyncio.CancelledError:
-        pass
 
-    try:
-        await command_consumer_task
-    except asyncio.CancelledError:
-        pass
+# Main function to start servers
+def main():
+    # Create threads for websocket_server and command_consumer
+    websocket_thread = threading.Thread(target=run_websocket_server, daemon=True)
+    command_consumer_thread = threading.Thread(target=run_command_consumer, daemon=True)
+
+    # Start threads
+    websocket_thread.start()
+    command_consumer_thread.start()
+
+    # Main thread waits for "quit" command
+    while True:
+        user_input = input("Type 'quit' to stop the servers: ")
+        if user_input == "quit":
+            print("Shutting down...")
+            shutdown_event.set()  # Signal all threads to shut down
+            websocket_thread.join() # Wait for the threads to finish
+            command_consumer_thread.join() # Wait for the threads to finish
+            break
 
 def shutdown_handler(signum, frame):
     print("Shutdown signal received. Cleaning up...")
-    asyncio.get_event_loop().call_soon_threadsafe(shutdown_event.set)  # Signal the event to shut down
+    shutdown_event.set() # Signal the threads to close
+
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, shutdown_handler)  # For Ctrl+C
-    signal.signal(signal.SIGTERM, shutdown_handler)  # For system kill command
-
-    # Run the main function
-    asyncio.run(main())
+    signal.signal(signal.SIGINT, shutdown_handler) # For Ctrl+C
+    signal.signal(signal.SIGTERM, shutdown_handler) # For system kill command
+    main()

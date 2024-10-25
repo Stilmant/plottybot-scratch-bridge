@@ -3,7 +3,7 @@ import asyncio
 import websockets
 import socket
 import json
-from queue import Queue
+from queue import Queue, Empty
 
 # Configuration
 command_server_address = "127.0.0.1"
@@ -58,7 +58,7 @@ async def command_consumer():
         while calibrated and not shutdown_event.is_set():
             try:
                 command = command_queue.get_nowait()
-            except Queue.Empty:
+            except Empty:
                 await asyncio.sleep(0.1)
                 continue
 
@@ -121,8 +121,15 @@ async def main():
     command_consumer_task.cancel()
 
     # Wait for the tasks to finish
-    await websocket_server_task
-    await command_consumer_task
+    try:
+        await websocket_server_task
+    except asyncio.CancelledError:
+        pass
+
+    try:
+        await command_consumer_task
+    except asyncio.CancelledError:
+        pass
 
 def shutdown_handler(signum, frame):
     print("Shutdown signal received. Cleaning up...")

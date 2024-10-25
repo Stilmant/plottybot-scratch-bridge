@@ -34,7 +34,7 @@ def send_command_to_hardware(command):
         return "error"
 
 # Process commands in the queue
-async def command_consumer(command_queue):
+async def command_consumer():
     global canvas_max_x, canvas_max_y
     calibrated = False
     while not shutdown_event.is_set():
@@ -99,46 +99,34 @@ async def websocket_server(websocket, path):
         print("Scratch client disconnected. Queue cleared.")
 
 async def start_websocket_server():
-    async with websockets.serve(websocket_server, '0.0.0.0', websocket_port) as server:
+    async with websockets.serve(websocket_server, '0.0.0.0', websocket_port):
         print("WebSocket server started on port 8766")
         await shutdown_event.wait()  # Run until shutdown_event is set
         print("Shutting down WebSocket server...")
 
-def run_websocket_server(loop):
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(start_websocket_server())
+async def main():
+    # Start the websocket server and the command consumer
+    websocket_server_task = asyncio.create_task(start_websocket_server())
+    command_consumer_task = asyncio.create_task(command_consumer())
 
-async def run_command_consumer():
-    await command_consumer(command_queue)
+    # Wait for the shutdown signal
+    await shutdown_event.wait()
 
-def main():
-    # Create the shared event loop
-    loop = asyncio.new_event_loop()
+    # Cancel the tasks
+    websocket_server_task.cancel()
+    command_consumer_task.cancel()
 
-    # Create threads for websocket_server and command_consumer
-    websocket_thread = threading.Thread(target=run_websocket_server, args=(loop,), daemon=True)
-    command_consumer_thread = threading.Thread(target=lambda: loop.run_until_complete(run_command_consumer()), daemon=True)
-
-    # Start threads
-    websocket_thread.start()
-    command_consumer_thread.start()
-
-    # Main thread waits for "quit" command
-    while True:
-        user_input = input("Type 'quit' to stop the servers: ")
-        if user_input == "quit":
-            print("Shutting down...")
-            loop.call_soon_threadsafe(shutdown_event.set)  # Signal all threads to shut down
-            websocket_thread.join()
-            command_consumer_thread.join()
-            loop.stop()
-            break
+    # Wait for the tasks to finish
+    await websocket_server_task
+    await command_consumer_task
 
 def shutdown_handler(signum, frame):
     print("Shutdown signal received. Cleaning up...")
-    shutdown_event.set() # Signal the threads to close
+    shutdown_event.set()  # Signal the event to shut down
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, shutdown_handler) # For Ctrl+C
-    signal.signal(signal.SIGTERM, shutdown_handler) # For system kill command
-    main()
+    signal.signal(signal.SIGINT, shutdown_handler)  # For Ctrl+C
+    signal.signal(signal.SIGTERM, shutdown_handler)  # For system kill command
+
+    # Run the main function
+    asyncio.run(main())

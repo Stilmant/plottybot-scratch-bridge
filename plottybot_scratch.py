@@ -16,6 +16,7 @@ canvas_max_y = 0
 
 # Global shutdown flag
 shutdown_event = threading.Event()
+pen_state = "up"  # Initial state is up
 
 def convert_coordinates(x, y):
     converted_x = (x + 250) * canvas_max_x / 500
@@ -35,7 +36,7 @@ def send_command_to_hardware(command):
 
 # Process commands in the queue
 async def command_consumer(command_queue):
-    global canvas_max_x, canvas_max_y
+    global canvas_max_x, canvas_max_y, pen_state
     calibrated = False
     while True:
         # Check if calibrated
@@ -65,9 +66,15 @@ async def command_consumer(command_queue):
                 calibrated = False
                 break
 
+            # Manage pen state based on the command
+            if command == "pen_up":
+                pen_state = "up"
+            elif command == "pen_down":
+                pen_state = "down"
 
 # Websocket Server Logic
 async def websocket_server(websocket, path):
+    global pen_state, pen_up_task
     oldX = 0
     oldY = 0
     print("New Scratch client connected.")
@@ -78,26 +85,42 @@ async def websocket_server(websocket, path):
             if data["type"] == "goToXY":
                 if data["oldX"] != oldX or data["oldY"] != oldY:
                     # If oldX or oldY has changed, send a penUp command and move to the new 'old' location
-                    command_queue.put("pen_up")
+                    if pen_state != "up":
+                        command_queue.put("pen_up")
+                        pen_state = "up"
                     x, y = convert_coordinates(data["oldX"], data["oldY"])
                     command_queue.put(f"go_to({x},{y})")
                     oldX = data["oldX"]
                     oldY = data["oldY"]
 
-                # Send a penDown command and move to the new location
-                command_queue.put("pen_down")
+                if pen_state != "down":
+                    command_queue.put("pen_down")
+                    pen_state = "down"
                 x, y = convert_coordinates(data["x"], data["y"])
                 command_queue.put(f"go_to({x},{y})")
+
             if data["type"] == "penUp":
-                command_queue.put("pen_up")
+                if pen_state != "up":
+                    command_queue.put("pen_up")
+                    pen_state = "up"
+
+            # Reset the pen up timeout task
+            if pen_up_task is not None:
+                pen_up_task.cancel()
+            pen_up_task = asyncio.create_task(pen_up_timeout(1))
+
             await websocket.send("ok")
     except websockets.exceptions.ConnectionClosed:
-        # When Scratch client disconnects
+		# When Scratch client disconnects
         while not command_queue.empty():
             command_queue.get()
         print("Scratch client disconnected. Queue cleared.")
 
 async def start_websocket_server():
+    global pen_up_task
+    loop = asyncio.get_running_loop()
+    # Initialize the pen up timeout task with a delay of 5 seconds
+    pen_up_task = loop.create_task(pen_up_timeout(1))
     async with websockets.serve(websocket_server, '0.0.0.0', websocket_port):
         print("WebSocket server started on port 8766")
         await asyncio.Future()  # run forever
@@ -107,12 +130,6 @@ def run_websocket_server():
 
 def run_command_consumer():
     asyncio.run(command_consumer(command_queue))
-
-def command_consumer_thread_function():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(command_consumer())
-
 
 # Main function to start servers
 def main():

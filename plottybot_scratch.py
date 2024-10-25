@@ -19,9 +19,15 @@ shutdown_event = threading.Event()
 pen_state = "up"  # Initial state is up
 
 def convert_coordinates(x, y):
-    converted_x = (x + 250) * canvas_max_x / 500
-    converted_y = (y + 180) * canvas_max_y / 360
+    # Swap X and Y coordinates to optimize plotting for A4 paper
+    # Since the paper is oriented with the longer side along the Y axis on the plotter,
+    # we switch the incoming Scratch X (horizontal) with Y (vertical) for better utilization.
+    # Additionally, we invert the X coordinate (now based on Y) to account for the plotter's movement
+    # direction, which is reversed along the X axis.
+    converted_x = canvas_max_x - ((y + 250) * canvas_max_x / 500)  # Invert Y to X for the plotter's X coordinate
+    converted_y = (x + 180) * canvas_max_y / 360  # Use 'x' to calculate plotter's Y coordinate
     return converted_x, converted_y
+
 
 def send_command_to_hardware(command):
     try:
@@ -81,46 +87,43 @@ async def websocket_server(websocket, path):
     try:
         async for message in websocket:
             data = json.loads(message)
-            print(f"Received message: {data}")
+
             if data["type"] == "goToXY":
+                print(f"Received trace command: from ({data['oldX']}, {data['oldY']}) to ({data['x']}, {data['y']}) while at ({oldX}, {oldY})")
                 if data["oldX"] != oldX or data["oldY"] != oldY:
                     # If oldX or oldY has changed, send a penUp command and move to the new 'old' location
+                    print(f"Moving to location: ({data['oldX']}, {data['oldY']})")
                     if pen_state != "up":
                         command_queue.put("pen_up")
                         pen_state = "up"
                     x, y = convert_coordinates(data["oldX"], data["oldY"])
                     command_queue.put(f"go_to({x},{y})")
-                    oldX = data["oldX"]
-                    oldY = data["oldY"]
 
+                print(f"Tracing to location: ({data['x']}, {data['y']})")
                 if pen_state != "down":
                     command_queue.put("pen_down")
                     pen_state = "down"
                 x, y = convert_coordinates(data["x"], data["y"])
                 command_queue.put(f"go_to({x},{y})")
+                oldX = data['x']
+                oldY = data['y']
 
             if data["type"] == "penUp":
                 if pen_state != "up":
                     command_queue.put("pen_up")
                     pen_state = "up"
 
-            # Reset the pen up timeout task
-            if pen_up_task is not None:
-                pen_up_task.cancel()
-            pen_up_task = asyncio.create_task(pen_up_timeout(1))
+            if data["type"] != "goToXY" and data["type"] != "penUp":
+                print(f"Unknown command type: {data['type']}")
 
             await websocket.send("ok")
     except websockets.exceptions.ConnectionClosed:
-		# When Scratch client disconnects
+        # When Scratch client disconnects
         while not command_queue.empty():
             command_queue.get()
         print("Scratch client disconnected. Queue cleared.")
 
 async def start_websocket_server():
-    global pen_up_task
-    loop = asyncio.get_running_loop()
-    # Initialize the pen up timeout task with a delay of 5 seconds
-    pen_up_task = loop.create_task(pen_up_timeout(1))
     async with websockets.serve(websocket_server, '0.0.0.0', websocket_port):
         print("WebSocket server started on port 8766")
         await asyncio.Future()  # run forever

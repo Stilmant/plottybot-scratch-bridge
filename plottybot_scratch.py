@@ -19,15 +19,23 @@ shutdown_event = threading.Event()
 pen_state = "up"  # Initial state is up
 
 def convert_coordinates(x, y):
-    # Swap X and Y coordinates to optimize plotting for A4 paper
-    # Since the paper is oriented with the longer side along the Y axis on the plotter,
-    # we switch the incoming Scratch X (horizontal) with Y (vertical) for better utilization.
-    # Additionally, we invert the X coordinate (now based on Y) to account for the plotter's movement
-    # direction, which is reversed along the X axis.
-    converted_x = canvas_max_x - ((y + 250) * canvas_max_x / 500)  # Invert Y to X for the plotter's X coordinate
-    converted_y = (x + 180) * canvas_max_y / 360  # Use 'x' to calculate plotter's Y coordinate
-    return converted_x, converted_y
+    # Adjust coordinates for the plotter's canvas while rotating and scaling properly
+    # X on the plotter is 0 to plotter_canvas_width (always 100 in your case)
+    # Y on the plotter is larger (up to 150 or 160), but we scale it to match the aspect ratio
+    # between Scratch's coordinates and the plotter's canvas, centered with an offset.
 
+    # Calculate the proportional height for the plotter's canvas based on Scratch's 480x360 aspect ratio
+    plotter_canvas_height = canvas_max_x * 480 / 360  # The height the Y axis should occupy on the plotter
+    plotter_canvas_width = canvas_max_x  # X width remains the same (always 100)
+
+    # Calculate the offset to center the plotter's Y axis
+    canvas_y_center_offset = (plotter_canvas_height - plotter_canvas_width) / 2
+
+    # Convert and invert X and Y
+    plotter_x = plotter_canvas_width - ((y + 180) * plotter_canvas_width / 360)  # Scale Y from Scratch to X on plotter
+    plotter_y = canvas_y_center_offset + (x + 240) * plotter_canvas_height / 480  # Scale X from Scratch to Y on plotter with centering offset
+
+    return plotter_x, plotter_y
 
 def send_command_to_hardware(command):
     try:

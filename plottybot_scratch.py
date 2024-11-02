@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import signal
 import asyncio
 import websockets

@@ -118,11 +118,15 @@ async def websocket_server(websocket, path):
                 oldY = data['y']
 
             if data["type"] == "penUp":
+                print("Received penUp command")
                 if pen_state != "up":
                     command_queue.put("pen_up")
                     pen_state = "up"
 
-            if data["type"] != "goToXY" and data["type"] != "penUp":
+            if data["type"] == "penDown":
+                print("Received penDown command")
+
+            if data["type"] != "goToXY" and data["type"] != "penUp" and data["type"] != "penDown":
                 print(f"Unknown command type: {data['type']}")
 
             await websocket.send("ok")

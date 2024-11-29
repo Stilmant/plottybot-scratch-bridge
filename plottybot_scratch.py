@@ -8,6 +8,7 @@ import threading
 from queue import Queue
 
 # Configuration
+software_version = "1.1"
 command_server_address = "127.0.0.1"
 command_server_port = 1337
 websocket_port = 8766
@@ -126,6 +127,15 @@ async def websocket_server(websocket, path):
             if data["type"] == "penDown":
                 print("Received penDown command")
 
+            if data["type"] == "stop":
+                # we call a function that will
+                # stop sending commands
+                # and clear the queue
+                print("Received stop command")
+                while not command_queue.empty():
+                    command_queue.get()
+                print("Queue cleared.")
+
             if data["type"] != "goToXY" and data["type"] != "penUp" and data["type"] != "penDown":
                 print(f"Unknown command type: {data['type']}")
 
@@ -149,6 +159,11 @@ def run_command_consumer():
 
 # Main function to start servers
 def main():
+    print("Starting PlottyBot-Scratch bridge...")
+    print("Code Club 2024 - Version {}".format(software_version))
+    print("Press Ctrl+C to stop the servers")
+    print("Connecting to command server on port {}".format(command_server_port))
+
     # Create threads for websocket_server and command_consumer
     websocket_thread = threading.Thread(target=run_websocket_server, daemon=True)
     command_consumer_thread = threading.Thread(target=run_command_consumer, daemon=True)

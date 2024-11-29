@@ -8,7 +8,7 @@ import threading
 from queue import Queue
 
 # Configuration
-software_version = "1.1"
+software_version = "1.2"
 command_server_address = "127.0.0.1"
 command_server_port = 1337
 websocket_port = 8766
@@ -142,9 +142,9 @@ async def websocket_server(websocket, path):
             await websocket.send("ok")
     except websockets.exceptions.ConnectionClosed:
         # When Scratch client disconnects
-        while not command_queue.empty():
-            command_queue.get()
-        print("Scratch client disconnected. Queue cleared.")
+        #while not command_queue.empty():
+        #    command_queue.get()
+        print("Scratch client disconnected. Queue not cleared.")
 
 async def start_websocket_server():
     async with websockets.serve(websocket_server, '0.0.0.0', websocket_port):

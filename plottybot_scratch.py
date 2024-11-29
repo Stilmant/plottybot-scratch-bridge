@@ -8,7 +8,7 @@ import threading
 from queue import Queue
 
 # Configuration
-software_version = "1.2"
+software_version = "1.3"
 command_server_address = "127.0.0.1"
 command_server_port = 1337
 websocket_port = 8766
@@ -18,7 +18,7 @@ canvas_max_y = 0
 
 # Global shutdown flag
 shutdown_event = threading.Event()
-pen_state = "up"  # Initial state is up
+
 
 def convert_coordinates(x, y):
     # Adjust coordinates for the plotter's canvas while rotating and scaling properly
@@ -47,12 +47,12 @@ def send_command_to_hardware(command):
             response = s.recv(1024)
         return response.decode('utf-8')
     except socket.error as e:
-        print(f"Socket error: {e}")
+        print(f"Socket error while sending '{command}': {e}")
         return "error"
 
 # Process commands in the queue
 async def command_consumer(command_queue):
-    global canvas_max_x, canvas_max_y, pen_state
+    global canvas_max_x, canvas_max_y
     calibrated = False
     while True:
         # Check if calibrated
@@ -82,15 +82,9 @@ async def command_consumer(command_queue):
                 calibrated = False
                 break
 
-            # Manage pen state based on the command
-            if command == "pen_up":
-                pen_state = "up"
-            elif command == "pen_down":
-                pen_state = "down"
-
 # Websocket Server Logic
 async def websocket_server(websocket, path):
-    global pen_state, pen_up_task
+    pen_state = "down"  # Initial state is down to force at least a up command before moving
     oldX = 0
     oldY = 0
     print("New Scratch client connected.")
@@ -127,14 +121,24 @@ async def websocket_server(websocket, path):
             if data["type"] == "penDown":
                 print("Received penDown command")
 
+            if data["type"] == "penToggle":
+                print("Received penToggle command")
+                if pen_state == "up":
+                    command_queue.put("pen_down")
+                    pen_state = "down"
+                else:
+                    command_queue.put("pen_up")
+                    pen_state = "up"
+
             if data["type"] == "stop":
                 # we call a function that will
                 # stop sending commands
                 # and clear the queue
                 print("Received stop command")
-                while not command_queue.empty():
-                    command_queue.get()
-                print("Queue cleared.")
+                with command_queue.mutex:
+                    cleared_count = len(command_queue.queue)
+                    command_queue.queue.clear()
+                print(f"Queue cleared. {cleared_count} commands removed.")
 
             if data["type"] != "goToXY" and data["type"] != "penUp" and data["type"] != "penDown":
                 print(f"Unknown command type: {data['type']}")
@@ -145,6 +149,9 @@ async def websocket_server(websocket, path):
         #while not command_queue.empty():
         #    command_queue.get()
         print("Scratch client disconnected. Queue not cleared.")
+    except Exception as e:
+        print(f"Unexpected error in WebSocket server from client {websocket.remote_address}: {e}")
+
 
 async def start_websocket_server():
     async with websockets.serve(websocket_server, '0.0.0.0', websocket_port):
